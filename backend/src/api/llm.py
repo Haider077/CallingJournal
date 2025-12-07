@@ -1,9 +1,9 @@
 """
 LLM API endpoints for direct interaction with language models.
 """
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
@@ -109,3 +109,43 @@ async def analyze_sentiment(
     """
     sentiment = await llm_service.analyze_sentiment(text=text)
     return sentiment
+
+
+@router.post("/text-to-speech")
+async def text_to_speech(
+    text: str,
+    voice: Optional[str] = "alloy",
+    speed: Optional[float] = 1.0,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Convert text to speech audio for Twilio.
+    
+    Args:
+        text: Text to convert to speech
+        voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
+        speed: Speech speed (0.25 to 4.0)
+        current_user: Current authenticated user
+        
+    Returns:
+        Audio file in mp3 format
+    """
+    try:
+        audio_data = await llm_service.text_to_speech(
+            text=text,
+            voice=voice,
+            speed=speed
+        )
+        
+        return Response(
+            content=audio_data,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f"attachment; filename=speech.mp3"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate audio: {str(e)}"
+        )

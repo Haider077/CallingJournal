@@ -2,12 +2,13 @@
 LLM service module for handling AI conversation and summarization.
 Provides abstraction layer for different LLM providers (OpenAI, Anthropic, etc.)
 """
+import json
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from enum import Enum
 
 import openai
-from anthropic import Anthropic, AsyncAnthropic
+from anthropic import AsyncAnthropic
 
 from src.config import settings
 
@@ -128,6 +129,26 @@ class ILLMService(ABC):
             Dict containing sentiment label and score
         """
         pass
+    
+    @abstractmethod
+    async def text_to_speech(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """
+        Convert text to speech audio.
+        
+        Args:
+            text: Text to convert to speech
+            voice: Voice to use (provider-specific)
+            **kwargs: Additional provider-specific parameters
+            
+        Returns:
+            Audio bytes in format suitable for Twilio (mp3/wav)
+        """
+        pass
 
 
 class OpenAILLMService(ILLMService):
@@ -209,7 +230,6 @@ class OpenAILLMService(ILLMService):
             response_format={"type": "json_object"}
         )
         
-        import json
         return json.loads(response)
     
     async def extract_entities(
@@ -233,7 +253,6 @@ class OpenAILLMService(ILLMService):
             response_format={"type": "json_object"}
         )
         
-        import json
         result = json.loads(response)
         return result.get("entities", [])
     
@@ -260,8 +279,35 @@ class OpenAILLMService(ILLMService):
             response_format={"type": "json_object"}
         )
         
-        import json
         return json.loads(response)
+    
+    async def text_to_speech(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """
+        Convert text to speech using OpenAI TTS API.
+        
+        Args:
+            text: Text to convert to speech
+            voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
+            **kwargs: Additional parameters (model, speed, response_format)
+            
+        Returns:
+            Audio bytes in mp3 format (Twilio compatible)
+        """
+        response = await self.client.audio.speech.create(
+            model=kwargs.get("model", "tts-1"),  # tts-1 or tts-1-hd
+            voice=voice or kwargs.get("voice", "alloy"),
+            input=text,
+            response_format=kwargs.get("response_format", "mp3"),  # mp3, opus, aac, flac
+            speed=kwargs.get("speed", 1.0)  # 0.25 to 4.0
+        )
+        
+        # Return audio bytes
+        return response.content
 
 
 class AnthropicLLMService(ILLMService):
@@ -357,7 +403,6 @@ class AnthropicLLMService(ILLMService):
             system=system_prompt
         )
         
-        import json
         # Extract JSON from response (Claude might wrap it in markdown)
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
@@ -384,7 +429,6 @@ class AnthropicLLMService(ILLMService):
         
         response = await self.generate_response(messages=messages, temperature=0.3)
         
-        import json
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
@@ -413,13 +457,34 @@ class AnthropicLLMService(ILLMService):
         
         response = await self.generate_response(messages=messages, temperature=0.3)
         
-        import json
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
             response = response.split("```")[1].split("```")[0].strip()
         
         return json.loads(response)
+    
+    async def text_to_speech(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """
+        Convert text to speech - Anthropic doesn't have native TTS.
+        Falls back to OpenAI TTS API.
+        
+        Args:
+            text: Text to convert to speech
+            voice: Voice to use
+            **kwargs: Additional parameters
+            
+        Returns:
+            Audio bytes in mp3 format (Twilio compatible)
+        """
+        # Use OpenAI's TTS as fallback since Anthropic doesn't have TTS
+        openai_service = OpenAILLMService()
+        return await openai_service.text_to_speech(text, voice, **kwargs)
 
 
 class OpenRouterLLMService(ILLMService):
@@ -523,7 +588,6 @@ class OpenRouterLLMService(ILLMService):
             **kwargs
         )
 
-        import json
         # Handle potential markdown wrapping
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
@@ -553,7 +617,6 @@ class OpenRouterLLMService(ILLMService):
             **kwargs
         )
 
-        import json
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
@@ -583,13 +646,41 @@ class OpenRouterLLMService(ILLMService):
             **kwargs
         )
 
-        import json
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
             response = response.split("```")[1].split("```")[0].strip()
 
         return json.loads(response)
+    
+    async def text_to_speech(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """
+        Convert text to speech using OpenRouter TTS API.
+        
+        Args:
+            text: Text to convert to speech
+            voice: Voice to use (provider-specific)
+            **kwargs: Additional parameters
+            
+        Returns:
+            Audio bytes in mp3 format (Twilio compatible)
+        """
+        response = await self.client.audio.speech.create(
+            model=kwargs.get("model", "tts-1"),  # tts-1 or tts-1-hd
+            voice=voice or kwargs.get("voice", "alloy"),
+            input=text,
+            response_format=kwargs.get("response_format", "mp3"),  # mp3, opus, aac, flac
+            speed=kwargs.get("speed", 1.0),  # 0.25 to 4.0
+            extra_headers=self.extra_headers
+        )
+        
+        # Return audio bytes
+        return response.content
 
 
 class LLMServiceFactory:
