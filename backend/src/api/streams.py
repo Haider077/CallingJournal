@@ -84,7 +84,7 @@ async def send_audio_to_twilio(twilio_ws: WebSocket, stream_sid: str, audio_data
 
 async def speak_response(twilio_ws: WebSocket, state: CallState, text: str):
     """
-    Generate TTS and send to Twilio.
+    Log the AI response, generate TTS audio, and send to Twilio.
 
     Args:
         twilio_ws: Twilio WebSocket connection
