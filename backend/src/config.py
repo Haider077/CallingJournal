@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # Phone Service
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
-    twilio_phone_number: str = "+17752547971"
+    twilio_phone_number: str = ""
     # vonage_api_key: str = ""
     # vonage_api_secret: str = ""
     # vonage_phone_number: str = ""
@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # Deepgram (for streaming transcription)
     deepgram_api_key: str = ""
     deepgram_model: str = "nova-3"  # Options: nova-3, nova-2, whisper, etc.
+    deepgram_language: str = "en"
+    deepgram_encoding: str = "mulaw"
+    deepgram_sample_rate: int = 8000
+    deepgram_channels: int = 1
+    deepgram_endpointing: int = 500  # ms silence for utterance end
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"
