@@ -54,12 +54,23 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 1 day
     
     # LLM Configuration
+    # Default LLM provider: openai, anthropic, or openrouter
+    llm_provider: str = "openai"
+
+    # OpenAI
     openai_api_key: str = ""
     openai_model: str = "gpt-4-turbo-preview"
-    openai_embedding_model: str = "text-embedding-3-small"  # OPENAI_EMBEDDING_MODEL
+    openai_embedding_model: str = "text-embedding-3-small"
 
+    # Anthropic
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-opus-20240229"
+
+    # OpenRouter (supports multiple models via unified API)
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openai/gpt-4-turbo"
+    openrouter_site_url: str = ""  # Optional: Your site URL for rankings
+    openrouter_app_name: str = "CallingJournal"  # Optional: App name for rankings
 
     # Vector Database (Pinecone)
     pinecone_api_key: str = ""  # PINECONE_API_KEY
