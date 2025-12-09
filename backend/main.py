@@ -8,6 +8,22 @@ from . import models, crud, schemas
 from .database import SessionLocal, engine
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Explicitly load .env from the project root
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+load_dotenv(dotenv_path)
+
+# Configure Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+else:
+    print("Warning: GEMINI_API_KEY not found in environment variables")
+    model = None
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -17,7 +33,7 @@ app = FastAPI(title="Calling Journal API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"], # Vite default ports
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:3000"], # Vite default ports
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -174,3 +190,97 @@ def delete_entry(
     if db_entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return db_entry
+
+@app.post("/chat/sessions", response_model=schemas.ChatSession)
+def create_chat_session(
+    session: schemas.ChatSessionCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return crud.create_chat_session(db, current_user.id, session.title)
+
+@app.get("/chat/sessions", response_model=list[schemas.ChatSession])
+def get_chat_sessions(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return crud.get_chat_sessions(db, current_user.id)
+
+@app.get("/chat/sessions/{session_id}", response_model=schemas.ChatSession)
+def get_chat_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    session = crud.get_chat_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    session = crud.delete_chat_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "success"}
+
+@app.post("/chat/{session_id}", response_model=schemas.ChatMessage)
+async def chat(
+    session_id: int,
+    message: schemas.ChatMessageCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if not model:
+        raise HTTPException(status_code=503, detail="AI service not configured")
+
+    # Verify session ownership
+    session = crud.get_chat_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Save user message
+    crud.create_chat_message(db, message, session_id)
+    
+    try:
+        # Get chat history for context
+        history = crud.get_chat_messages(db, session_id)
+        chat_history = []
+        for msg in history:
+            role = "user" if msg.role == "user" else "model"
+            chat_history.append({"role": role, "parts": [msg.content]})
+            
+        # Generate AI response with history
+        prompt = message.content
+        if message.context:
+            prompt = f"Context:\n{message.context}\n\nUser Message: {message.content}"
+            
+        chat_session = model.start_chat(history=chat_history)
+        response = chat_session.send_message(prompt)
+        ai_response_text = response.text
+        
+        # Save AI response
+        ai_msg_schema = schemas.ChatMessageCreate(role="model", content=ai_response_text, session_id=session_id)
+        ai_msg = crud.create_chat_message(db, ai_msg_schema, session_id)
+        
+        return ai_msg
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/chat/{session_id}/messages", response_model=list[schemas.ChatMessage])
+def get_chat_history(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # Verify session ownership
+    session = crud.get_chat_session(db, session_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    return crud.get_chat_messages(db, session_id)

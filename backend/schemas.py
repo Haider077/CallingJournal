@@ -15,6 +15,38 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
+# Chat Schemas
+class ChatMessageBase(BaseModel):
+    role: str
+    content: str
+
+class ChatMessageCreate(ChatMessageBase):
+    context: Optional[str] = None
+
+class ChatMessage(ChatMessageBase):
+    id: int
+    timestamp: datetime
+    session_id: int
+
+    class Config:
+        from_attributes = True
+
+class ChatSessionBase(BaseModel):
+    title: str
+
+class ChatSessionCreate(ChatSessionBase):
+    pass
+
+class ChatSession(ChatSessionBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+    user_id: int
+    messages: list[ChatMessage] = []
+
+    class Config:
+        from_attributes = True
+
 # Journal Entry Schemas
 class JournalEntryBase(BaseModel):
     date: date

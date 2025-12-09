@@ -12,47 +12,110 @@
  * - Message input with send functionality
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import ProfileMenu from './ProfileMenu'
+import { sendMessage, getChatHistory, getChatSessions, createChatSession, deleteChatSession } from './api'
 
 const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) => {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      role: 'assistant',
-      content: "Hello! I'm your AI journaling assistant. How are you feeling today? Would you like to reflect on something?",
-      timestamp: new Date(),
-      showSuggestions: true
-    }
-  ])
+  const [messages, setMessages] = useState([])
   const [inputMessage, setInputMessage] = useState('')
   const [isMenuCollapsed, setIsMenuCollapsed] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [sessions, setSessions] = useState([])
+  const [currentSessionId, setCurrentSessionId] = useState(null)
 
-  // Dummy chat history organized by date
-  const chatHistory = [
-    {
-      date: 'Today',
-      chats: [
-        { id: 1, title: 'Morning Reflection', time: '9:30 AM', active: true },
-        { id: 2, title: 'Piano Practice Thoughts', time: '2:15 PM', active: false }
-      ]
-    },
-    {
-      date: 'Yesterday',
-      chats: [
-        { id: 3, title: 'Evening Gratitude', time: '8:45 PM', active: false },
-        { id: 4, title: 'Work Day Review', time: '5:30 PM', active: false }
-      ]
-    },
-    {
-      date: 'This Week',
-      chats: [
-        { id: 5, title: 'Weekend Plans', time: 'Nov 4', active: false },
-        { id: 6, title: 'Career Reflections', time: 'Nov 3', active: false },
-        { id: 7, title: 'Family Time', time: 'Nov 2', active: false }
-      ]
+  useEffect(() => {
+    loadSessions()
+  }, [])
+
+  useEffect(() => {
+    if (currentSessionId) {
+      loadChatHistory(currentSessionId)
+    } else if (sessions.length > 0) {
+      // Select first session if none selected
+      setCurrentSessionId(sessions[0].id)
     }
-  ]
+  }, [currentSessionId, sessions])
+
+  const loadSessions = async () => {
+    try {
+      const fetchedSessions = await getChatSessions()
+      setSessions(fetchedSessions)
+      if (fetchedSessions.length > 0 && !currentSessionId) {
+        setCurrentSessionId(fetchedSessions[0].id)
+      }
+    } catch (error) {
+      console.error("Failed to load chat sessions", error)
+    }
+  }
+
+  const handleNewChat = async () => {
+    try {
+      const newSession = await createChatSession()
+      setSessions([newSession, ...sessions])
+      setCurrentSessionId(newSession.id)
+      setMessages([{
+        id: 'welcome',
+        role: 'assistant',
+        content: "Hello! I'm your AI journaling assistant. How are you feeling today? Would you like to reflect on something?",
+        timestamp: new Date(),
+        showSuggestions: true
+      }])
+    } catch (error) {
+      console.error("Failed to create new chat", error)
+    }
+  }
+
+  const handleDeleteChat = async (e, sessionId) => {
+    e.stopPropagation()
+    if (window.confirm("Are you sure you want to delete this chat?")) {
+      try {
+        await deleteChatSession(sessionId)
+        const updatedSessions = sessions.filter(s => s.id !== sessionId)
+        setSessions(updatedSessions)
+        if (currentSessionId === sessionId) {
+          setCurrentSessionId(updatedSessions.length > 0 ? updatedSessions[0].id : null)
+          if (updatedSessions.length === 0) {
+            setMessages([])
+          }
+        }
+      } catch (error) {
+        console.error("Failed to delete chat", error)
+      }
+    }
+  }
+
+  const loadChatHistory = async (sessionId) => {
+    try {
+      const history = await getChatHistory(sessionId)
+      const formattedMessages = history.map(msg => ({
+        id: msg.id,
+        role: msg.role === 'model' ? 'assistant' : 'user',
+        content: msg.content,
+        timestamp: new Date(msg.timestamp)
+      }))
+      
+      if (formattedMessages.length === 0) {
+          setMessages([{
+            id: 'welcome',
+            role: 'assistant',
+            content: "Hello! I'm your AI journaling assistant. How are you feeling today? Would you like to reflect on something?",
+            timestamp: new Date(),
+            showSuggestions: true
+          }])
+      } else {
+          setMessages(formattedMessages)
+      }
+    } catch (error) {
+      console.error("Failed to load chat history", error)
+    }
+  }
+
+  // Group sessions by date (simplified for now)
+  const groupedSessions = {
+    'Recent': sessions
+  }
 
   // Dummy AI insights
   const aiInsights = [
@@ -81,31 +144,49 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
     setInputMessage(suggestion)
   }
 
-  const handleSendMessage = (customMessage = null) => {
-    const messageToSend = customMessage || inputMessage
-    if (messageToSend.trim() === '') return
+  const handleSendMessage = async (customMessage = null) => {
+    const messageToSend = (typeof customMessage === 'string') ? customMessage : inputMessage
+    if (!messageToSend || messageToSend.trim() === '' || isLoading) return
+
+    // Create session if none exists
+    let activeSessionId = currentSessionId
+    if (!activeSessionId) {
+      try {
+        const newSession = await createChatSession()
+        setSessions([newSession, ...sessions])
+        setCurrentSessionId(newSession.id)
+        activeSessionId = newSession.id
+      } catch (error) {
+        console.error("Failed to create session", error)
+        return
+      }
+    }
 
     const newMessage = {
-      id: messages.length + 1,
+      id: Date.now(),
       role: 'user',
       content: messageToSend,
       timestamp: new Date()
     }
 
-    setMessages([...messages, newMessage])
+    setMessages(prev => [...prev, newMessage])
     setInputMessage('')
+    setIsLoading(true)
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiResponse = {
-        id: messages.length + 2,
+    try {
+      const response = await sendMessage(activeSessionId, messageToSend)
+      const aiMessage = {
+        id: response.id,
         role: 'assistant',
-        content: "That's a wonderful reflection! Tell me more about how that made you feel.",
-        timestamp: new Date(),
-        showSuggestions: Math.random() > 0.5 // Randomly show suggestions
+        content: response.content,
+        timestamp: new Date(response.timestamp)
       }
-      setMessages(prev => [...prev, aiResponse])
-    }, 1000)
+      setMessages(prev => [...prev, aiMessage])
+    } catch (error) {
+      console.error("Failed to send message", error)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleKeyPress = (e) => {
@@ -124,7 +205,10 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
           {!isMenuCollapsed ? (
             <>
               <h2 className="text-xl font-light text-white mb-4">Journal Chats</h2>
-              <button className="w-full bg-purple-600 hover:bg-purple-500 text-white py-2.5 px-4 rounded-md transition-colors font-light flex items-center justify-center gap-2">
+              <button 
+                onClick={handleNewChat}
+                className="w-full bg-purple-600 hover:bg-purple-500 text-white py-2.5 px-4 rounded-md transition-colors font-light flex items-center justify-center gap-2"
+              >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
                 </svg>
@@ -132,7 +216,10 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
               </button>
             </>
           ) : (
-            <button className="w-full bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-md transition-colors">
+            <button 
+              onClick={handleNewChat}
+              className="w-full bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-md transition-colors"
+            >
               <svg className="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
               </svg>
@@ -143,39 +230,57 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
         {/* Chat History List */}
         <div className="flex-1 overflow-y-auto p-4">
           {!isMenuCollapsed ? (
-            chatHistory.map((section) => (
-              <div key={section.date} className="mb-6">
+            sessions.length > 0 ? (
+              <div className="mb-6">
                 <h3 className="text-xs font-light text-gray-400 uppercase mb-2 px-2">
-                  {section.date}
+                  Recent Chats
                 </h3>
                 <div className="space-y-1">
-                  {section.chats.map((chat) => (
-                    <button
-                      key={chat.id}
-                      className={`w-full text-left px-3 py-2.5 rounded-md transition-colors ${
-                        chat.active
-                          ? 'bg-purple-600/20 text-white border border-purple-500/30'
-                          : 'text-gray-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      <div className="font-light text-sm truncate">{chat.title}</div>
-                      <div className="text-xs font-light text-gray-400 mt-0.5">{chat.time}</div>
-                    </button>
+                  {sessions.map((session) => (
+                    <div key={session.id} className="group relative">
+                      <button
+                        onClick={() => setCurrentSessionId(session.id)}
+                        className={`w-full text-left px-3 py-2.5 rounded-md transition-colors ${
+                          currentSessionId === session.id
+                            ? 'bg-purple-600/20 text-white border border-purple-500/30'
+                            : 'text-gray-300 hover:bg-slate-700'
+                        }`}
+                      >
+                        <div className="font-light text-sm truncate pr-6">{session.title}</div>
+                        <div className="text-xs font-light text-gray-400 mt-0.5">
+                          {new Date(session.updated_at || session.created_at).toLocaleDateString()}
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteChat(e, session.id)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity p-1"
+                        title="Delete chat"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
-            ))
+            ) : (
+              <div className="text-center text-gray-500 font-light text-sm mt-10">
+                No chats yet. Start a new one!
+              </div>
+            )
           ) : (
             <div className="space-y-2">
-              {chatHistory.flatMap(section => section.chats).map((chat) => (
+              {sessions.map((session) => (
                 <button
-                  key={chat.id}
+                  key={session.id}
+                  onClick={() => setCurrentSessionId(session.id)}
                   className={`w-full p-2 rounded-md transition-colors ${
-                    chat.active
+                    currentSessionId === session.id
                       ? 'bg-purple-600/20 text-white'
                       : 'text-gray-300 hover:bg-slate-700'
                   }`}
-                  title={chat.title}
+                  title={session.title}
                 >
                   <svg className="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -269,7 +374,17 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
                         : 'bg-slate-800 text-gray-200 border border-purple-700/30'
                     }`}
                   >
-                    <p className="text-sm font-light leading-relaxed">{message.content}</p>
+                    <div className="text-sm font-light leading-relaxed">
+                      {message.role === 'user' ? (
+                        message.content
+                      ) : (
+                        <div className="prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900/50 prose-pre:border prose-pre:border-purple-700/30">
+                          <ReactMarkdown>
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
                     <p className="text-xs font-light opacity-60 mt-1">
                       {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
@@ -292,6 +407,20 @@ const ChatInterface = ({ onNavigateToCalendar, onLogout, onStartNewJournal }) =>
                 )}
               </div>
             ))}
+            
+            {/* Loading Indicator */}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-slate-800 text-gray-200 border border-purple-700/30 rounded-2xl px-4 py-3 flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                  <span className="text-xs font-light text-gray-400">AI is thinking...</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -87,4 +87,33 @@ export const deleteEntry = async (date) => {
   return response.data;
 };
 
+export const sendMessage = async (sessionId, content, context = null) => {
+  const payload = { role: 'user', content };
+  if (context) {
+    payload.context = context;
+  }
+  const response = await api.post(`/chat/${sessionId}`, payload);
+  return response.data;
+};
+
+export const getChatHistory = async (sessionId) => {
+  const response = await api.get(`/chat/${sessionId}/messages`);
+  return response.data;
+};
+
+export const getChatSessions = async () => {
+  const response = await api.get('/chat/sessions');
+  return response.data;
+};
+
+export const createChatSession = async (title = "New Chat") => {
+  const response = await api.post('/chat/sessions', { title });
+  return response.data;
+};
+
+export const deleteChatSession = async (sessionId) => {
+  const response = await api.delete(`/chat/sessions/${sessionId}`);
+  return response.data;
+};
+
 export default api;
