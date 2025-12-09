@@ -12,10 +12,39 @@
  * - Click-outside-to-close behavior
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const ProfileMenu = ({ onLogout }) => {
   const [isOpen, setIsOpen] = useState(false)
+  const [userEmail, setUserEmail] = useState('')
+  const [userName, setUserName] = useState('')
+
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      try {
+        // Decode JWT payload
+        const base64Url = token.split('.')[1]
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+        const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+        }).join(''))
+        
+        const payload = JSON.parse(jsonPayload)
+        const email = payload.sub
+        setUserEmail(email)
+        
+        // Derive a display name from email (e.g. "john" from "john@example.com")
+        const name = email.split('@')[0]
+        // Capitalize first letter
+        setUserName(name.charAt(0).toUpperCase() + name.slice(1))
+      } catch (e) {
+        console.error("Failed to decode token", e)
+        setUserEmail('user@example.com')
+        setUserName('User')
+      }
+    }
+  }, [])
 
   return (
     <div className="relative">
@@ -39,8 +68,8 @@ const ProfileMenu = ({ onLogout }) => {
           {/* Dropdown Menu */}
           <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-purple-700/30 rounded-lg shadow-xl overflow-hidden z-20">
             <div className="px-4 py-3 border-b border-purple-700/30">
-              <p className="text-sm font-light text-white">John Doe</p>
-              <p className="text-xs font-light text-gray-400">john@example.com</p>
+              <p className="text-sm font-light text-white">{userName || 'User'}</p>
+              <p className="text-xs font-light text-gray-400">{userEmail || 'user@example.com'}</p>
             </div>
 
             <button

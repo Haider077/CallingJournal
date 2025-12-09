@@ -13,14 +13,72 @@
  * - Integration of both typing and voice input methods
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ProfileMenu from './ProfileMenu'
+import { getEntry, createEntry, updateEntry } from './api'
 
 const AITalk = ({ onBack, selectedDate, onLogout }) => {
   const [content, setContent] = useState('')
+  const [title, setTitle] = useState('My Journal Entry')
   const [isMuted, setIsMuted] = useState(false)
   const [volume, setVolume] = useState(50)
   const [isCallActive, setIsCallActive] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    if (selectedDate) {
+      fetchEntry()
+    }
+  }, [selectedDate])
+
+  const fetchEntry = async () => {
+    try {
+      const entry = await getEntry(selectedDate)
+      if (entry) {
+        setContent(entry.content || '')
+        setTitle(entry.title || 'My Journal Entry')
+      }
+    } catch (error) {
+      console.error("Failed to fetch entry:", error)
+    }
+  }
+
+  const handleSave = async () => {
+    setIsSaving(true)
+    try {
+      const entryData = {
+        date: selectedDate,
+        title,
+        content,
+        mood: '😊', // Default mood for now
+        audio_url: null // Placeholder
+      }
+
+      // Check if entry exists (we could also rely on backend upsert if implemented, 
+      // but our API service has separate create/update)
+      // Actually, let's try to get it first or just try update and fallback to create?
+      // A cleaner way is to check if we fetched an entry initially.
+      // For simplicity, I'll try to update, if 404 then create.
+      
+      try {
+        await updateEntry(selectedDate, entryData)
+      } catch (error) {
+        if (error.response && error.response.status === 404) {
+          await createEntry(entryData)
+        } else {
+          throw error
+        }
+      }
+      
+      // toast.success('Entry saved successfully!')
+    } catch (error) {
+      console.error("Failed to save entry:", error)
+      // toast.error('Failed to save entry.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
 
   const formatDisplayDate = (dateStr) => {
     if (!dateStr) return 'New Entry'
@@ -48,6 +106,13 @@ const AITalk = ({ onBack, selectedDate, onLogout }) => {
           Back to Calendar
         </button>
         <div className="flex items-center gap-4">
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-md text-sm font-light transition-colors disabled:opacity-50"
+          >
+            {isSaving ? 'Saving...' : 'Save Entry'}
+          </button>
           <div className="text-purple-200 font-light text-sm">
             {formatDisplayDate(selectedDate)}
           </div>
@@ -66,7 +131,8 @@ const AITalk = ({ onBack, selectedDate, onLogout }) => {
                 type="text"
                 placeholder="Entry Title"
                 className="text-3xl font-light text-gray-900 w-full outline-none placeholder-gray-300"
-                defaultValue="My Journal Entry"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
               />
               <div className="text-sm font-light text-gray-500 mt-2">
                 {formatDisplayDate(selectedDate)}

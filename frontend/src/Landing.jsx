@@ -13,8 +13,39 @@
  */
 
 import { useState } from 'react'
+import { login, register } from './api'
 
 const Landing = ({ onLogin }) => {
+  const [showLogin, setShowLogin] = useState(false)
+  const [isRegistering, setIsRegistering] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setError('')
+    setIsLoading(true)
+
+    try {
+      if (isRegistering) {
+        await register(email, password)
+        // Auto login after register
+        await login(email, password)
+      } else {
+        await login(email, password)
+      }
+      onLogin()
+    } catch (err) {
+      console.error(err)
+      const message = isRegistering ? 'Registration failed. Email might be taken.' : 'Login failed. Check your credentials.'
+      setError(message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-900 via-blue-900 to-purple-900">
       {/* Navigation */}
@@ -28,7 +59,7 @@ const Landing = ({ onLogin }) => {
               <span className="text-2xl font-light text-white">Journal AI</span>
             </div>
             <button
-              onClick={onLogin}
+              onClick={() => setShowLogin(true)}
               className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-md font-light transition-colors"
             >
               Login
@@ -36,6 +67,77 @@ const Landing = ({ onLogin }) => {
           </div>
         </div>
       </nav>
+
+      {/* Login Modal */}
+      {showLogin && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-purple-700/30 rounded-lg p-8 max-w-md w-full shadow-2xl">
+            <h2 className="text-2xl font-light text-white mb-6 text-center">
+              {isRegistering ? 'Create Account' : 'Welcome Back'}
+            </h2>
+            
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/50 text-red-200 px-4 py-2 rounded mb-4 text-sm">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-light text-gray-300 mb-1">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-slate-900 border border-purple-700/30 rounded px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-light text-gray-300 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-slate-900 border border-purple-700/30 rounded px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  placeholder="••••••••"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded font-light transition-colors disabled:opacity-50"
+              >
+                {isLoading ? 'Processing...' : (isRegistering ? 'Sign Up' : 'Login')}
+              </button>
+            </form>
+
+            <div className="mt-4 text-center text-sm font-light text-gray-400">
+              {isRegistering ? 'Already have an account?' : "Don't have an account?"}{' '}
+              <button
+                onClick={() => {
+                  setIsRegistering(!isRegistering)
+                  setError('')
+                }}
+                className="text-purple-400 hover:text-purple-300 underline"
+              >
+                {isRegistering ? 'Login' : 'Sign Up'}
+              </button>
+            </div>
+            
+            <button
+              onClick={() => setShowLogin(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Hero Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-16">
@@ -50,7 +152,7 @@ const Landing = ({ onLogin }) => {
             organize, and grow through the power of journaling.
           </p>
           <button
-            onClick={onLogin}
+            onClick={() => setShowLogin(true)}
             className="bg-purple-600 hover:bg-purple-500 text-white px-8 py-3 rounded-lg text-lg font-light transition-colors shadow-lg"
           >
             Start Journaling Free

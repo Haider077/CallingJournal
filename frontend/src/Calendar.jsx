@@ -13,26 +13,36 @@
  * - Profile menu for user settings and logout
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ProfileMenu from './ProfileMenu'
+import { getEntries, deleteEntry } from './api'
 
 const Calendar = ({ onOpenAITalk, onLogout, onBackToChat }) => {
-  // Sample journal data - in a real app, this would come from an API or local storage
-  const [journalEntries, setJournalEntries] = useState(new Set([
-    '2025-01-15', '2025-01-20', '2025-02-05', '2025-02-14', '2025-02-28',
-    '2025-03-10', '2025-03-22', '2025-04-03', '2025-04-18', '2025-05-01',
-    '2025-05-12', '2025-06-08', '2025-06-25', '2025-07-04', '2025-07-19',
-    '2025-08-11', '2025-08-30', '2025-09-15', '2025-10-07', '2025-10-31',
-    '2025-11-03', '2025-11-15', '2025-12-10', '2025-12-25'
-  ]))
+  // State for journal entries (dates that have entries)
+  const [journalEntries, setJournalEntries] = useState(new Set())
+  // State for journal data (the actual content)
+  const [journalData, setJournalData] = useState({})
 
-  // Dummy journal content
-  const journalData = {
-    '2025-01-15': { title: 'New Year Goals', mood: '😊', duration: '25 min', content: 'Started the year with renewed energy. Set ambitious goals for health and career.' },
-    '2025-02-14': { title: 'Valentine\'s Day Reflections', mood: '❤️', duration: '15 min', content: 'Reflected on relationships and gratitude. Spent quality time with loved ones.' },
-    '2025-03-22': { title: 'Spring Has Arrived', mood: '🌸', duration: '20 min', content: 'Noticed the first signs of spring. Feeling refreshed and motivated.' },
-    '2025-05-01': { title: 'May Day Adventures', mood: '🎉', duration: '30 min', content: 'Celebrated new beginnings. Started a new creative project.' },
-    '2025-11-03': { title: 'Today\'s Session', mood: '✨', duration: '18 min', content: 'Working on my journaling app. Excited about the progress made today.' },
+  useEffect(() => {
+    fetchEntries()
+  }, [])
+
+  const fetchEntries = async () => {
+    try {
+      const entries = await getEntries()
+      const newJournalEntries = new Set()
+      const newJournalData = {}
+      
+      entries.forEach(entry => {
+        newJournalEntries.add(entry.date)
+        newJournalData[entry.date] = entry
+      })
+      
+      setJournalEntries(newJournalEntries)
+      setJournalData(newJournalData)
+    } catch (error) {
+      console.error("Failed to fetch entries:", error)
+    }
   }
 
   const [selectedDate, setSelectedDate] = useState(null)
@@ -68,16 +78,8 @@ const Calendar = ({ onOpenAITalk, onLogout, onBackToChat }) => {
   }
 
   const toggleJournalEntry = (year, month, day) => {
-    const dateStr = formatDate(year, month, day)
-    const newEntries = new Set(journalEntries)
-    
-    if (newEntries.has(dateStr)) {
-      newEntries.delete(dateStr)
-    } else {
-      newEntries.add(dateStr)
-    }
-    
-    setJournalEntries(newEntries)
+    // This function was used for testing, now we just open the date
+    handleDateClick(year, month, day)
   }
 
   const handleDateClick = (year, month, day) => {
@@ -115,23 +117,29 @@ const Calendar = ({ onOpenAITalk, onLogout, onBackToChat }) => {
     setShowManageMenu(false)
   }
 
-  const handleDeleteEntry = () => {
-    const newEntries = new Set(journalEntries)
-    newEntries.delete(selectedDate)
-    setJournalEntries(newEntries)
-    
-    // Also remove from starred and hidden
-    const newStarred = new Set(starredEntries)
-    newStarred.delete(selectedDate)
-    setStarredEntries(newStarred)
-    
-    const newHidden = new Set(hiddenEntries)
-    newHidden.delete(selectedDate)
-    setHiddenEntries(newHidden)
-    
-    setShowDeleteWarning(false)
-    setShowManageMenu(false)
-    setIsPanelOpen(false)
+  const handleDeleteEntry = async () => {
+    try {
+      await deleteEntry(selectedDate)
+      
+      const newEntries = new Set(journalEntries)
+      newEntries.delete(selectedDate)
+      setJournalEntries(newEntries)
+      
+      // Also remove from starred and hidden
+      const newStarred = new Set(starredEntries)
+      newStarred.delete(selectedDate)
+      setStarredEntries(newStarred)
+      
+      const newHidden = new Set(hiddenEntries)
+      newHidden.delete(selectedDate)
+      setHiddenEntries(newHidden)
+      
+      setShowDeleteWarning(false)
+      setShowManageMenu(false)
+      setIsPanelOpen(false)
+    } catch (error) {
+      console.error("Failed to delete entry:", error)
+    }
   }
 
   const renderMonth = (monthIndex) => {
@@ -412,9 +420,6 @@ const Calendar = ({ onOpenAITalk, onLogout, onBackToChat }) => {
                   <div className="space-y-2">
                     <button 
                       onClick={() => {
-                        const newEntries = new Set(journalEntries)
-                        newEntries.add(selectedDate)
-                        setJournalEntries(newEntries)
                         onOpenAITalk && onOpenAITalk(selectedDate)
                       }}
                       className="w-full bg-purple-600 text-white py-2.5 px-4 rounded-md hover:bg-purple-500 transition-colors text-sm font-light flex items-center justify-center gap-2"

@@ -1,167 +1,176 @@
-"""
-Main FastAPI application entry point.
-"""
-import sys
-import os
-from contextlib import asynccontextmanager
-from pydantic import ValidationError
-
-
-def validate_config():
-    """
-    Validate configuration on startup.
-    Returns settings if valid, prints friendly error and exits if not.
-    """
-    try:
-        from src.config import Settings
-        return Settings()
-    except ValidationError as e:
-        print("\n" + "=" * 60)
-        print("CONFIGURATION ERROR")
-        print("=" * 60)
-        print("\nThe following required configuration values are missing or invalid:\n")
-
-        for error in e.errors():
-            field = error["loc"][0] if error["loc"] else "unknown"
-            field_upper = field.upper()
-            msg = error["msg"]
-            error_type = error["type"]
-
-            if error_type == "missing":
-                print(f"  • {field_upper}")
-                print(f"    Missing required value. Add to your .env file.")
-            else:
-                print(f"  • {field_upper}")
-                print(f"    {msg}")
-            print()
-
-        print("-" * 60)
-        print("To fix this:")
-        print("  1. Copy .env.example to .env if you haven't already:")
-        print("     cp .env.example .env")
-        print("  2. Edit .env and fill in the missing values")
-        print("  3. Restart the application")
-        print("-" * 60)
-        print()
-        sys.exit(1)
-
-
-# Validate configuration before importing anything else
-settings = validate_config()
-
-# Now safe to import modules that depend on settings
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+from typing import Annotated
+from . import models, crud, schemas
+from .database import SessionLocal, engine
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 
-from src.logging_config import setup_logging, get_logger
-from src.database import init_db, close_db
-from src.api import auth, calls, journals, knowledge, llm, webhooks, streams
+# Create tables
+models.Base.metadata.create_all(bind=engine)
 
-# Initialize logging
-setup_logging(
-    log_level=settings.log_level,
-    log_file=settings.log_file
-)
-
-logger = get_logger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Application lifespan manager.
-    Handles startup and shutdown events.
-    """
-    # Startup
-    logger.info("Starting CallingJournal application...")
-    await init_db()
-    logger.info("Database initialized")
-
-    # Create necessary directories
-    os.makedirs(settings.audio_storage_path, exist_ok=True)
-    os.makedirs(settings.log_storage_path, exist_ok=True)
-    os.makedirs(settings.journal_storage_path, exist_ok=True)
-    logger.info("Storage directories created")
-
-    yield
-
-    # Shutdown
-    logger.info("Shutting down CallingJournal application...")
-    await close_db()
-    logger.info("Database connections closed")
-
-
-# Create FastAPI application
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="AI-powered calling journal system for conversation logging and knowledge extraction",
-    lifespan=lifespan,
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None
-)
-
+app = FastAPI(title="Calling Journal API")
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"], # Vite default ports
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Auth Configuration
+SECRET_KEY = "your-secret-key-keep-it-secret" # In production, use env var
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Include API routers
-app.include_router(auth.router)
-app.include_router(calls.router)
-app.include_router(journals.router)
-app.include_router(knowledge.router)
-app.include_router(llm.router)
-app.include_router(webhooks.router)
-app.include_router(streams.router)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+        token_data = schemas.TokenData(email=email)
+    except JWTError:
+        raise credentials_exception
+    user = crud.get_user_by_email(db, email=token_data.email)
+    if user is None:
+        raise credentials_exception
+    return user
 
 @app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": settings.app_name,
-        "version": settings.app_version,
-        "status": "running",
-        "docs": "/docs" if settings.debug else "disabled in production"
-    }
-
+def read_root():
+    return {"message": "Welcome to the Calling Journal API"}
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "environment": settings.environment
-    }
+def health_check():
+    return {"status": "healthy"}
 
+@app.post("/register", response_model=schemas.User)
+def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = crud.get_user_by_email(db, email=user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    return crud.create_user(db=db, user=user)
 
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Handle uncaught exceptions."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "Internal server error",
-            "error": str(exc) if settings.debug else "An error occurred"
-        }
+@app.post("/token", response_model=schemas.Token)
+def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: Session = Depends(get_db)):
+    user = crud.get_user_by_email(db, email=form_data.username)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
     )
+    return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/entries/", response_model=schemas.JournalEntry)
+def create_entry(
+    entry: schemas.JournalEntryCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    db_entry = crud.get_journal_entry(db, entry_date=entry.date, user_id=current_user.id)
+    if db_entry:
+        raise HTTPException(status_code=400, detail="Entry already exists for this date")
+    return crud.create_journal_entry(db=db, entry=entry, user_id=current_user.id)
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        reload=settings.debug
-    )
+@app.get("/entries/", response_model=list[schemas.JournalEntry])
+def read_entries(
+    skip: int = 0, 
+    limit: int = 100, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    entries = crud.get_journal_entries(db, user_id=current_user.id, skip=skip, limit=limit)
+    return entries
+
+@app.get("/entries/{entry_date}", response_model=schemas.JournalEntry)
+def read_entry(
+    entry_date: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # Parse date string to date object
+    from datetime import datetime
+    try:
+        date_obj = datetime.strptime(entry_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+    db_entry = crud.get_journal_entry(db, entry_date=date_obj, user_id=current_user.id)
+    if db_entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return db_entry
+
+@app.put("/entries/{entry_date}", response_model=schemas.JournalEntry)
+def update_entry(
+    entry_date: str, 
+    entry: schemas.JournalEntryUpdate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    from datetime import datetime
+    try:
+        date_obj = datetime.strptime(entry_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+    db_entry = crud.update_journal_entry(db, entry_date=date_obj, entry_update=entry, user_id=current_user.id)
+    if db_entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return db_entry
+
+@app.delete("/entries/{entry_date}", response_model=schemas.JournalEntry)
+def delete_entry(
+    entry_date: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    from datetime import datetime
+    try:
+        date_obj = datetime.strptime(entry_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+    db_entry = crud.delete_journal_entry(db, entry_date=date_obj, user_id=current_user.id)
+    if db_entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return db_entry

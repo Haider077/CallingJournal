@@ -14,6 +14,8 @@ import AITalk from './AITalk'
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [currentPage, setCurrentPage] = useState('chat') // 'chat', 'calendar', or 'aitalk'
+  const [selectedDate, setSelectedDate] = useState(null)
+  const [returnPage, setReturnPage] = useState('chat')
 
   const handleLogin = () => {
     setIsLoggedIn(true)
@@ -34,26 +36,39 @@ function App() {
   }
 
   const handleOpenAITalk = (date) => {
+    setSelectedDate(date)
+    setReturnPage('calendar')
     setCurrentPage('aitalk')
   }
 
   const handleStartNewJournal = () => {
+    const today = new Date().toISOString().split('T')[0]
+    setSelectedDate(today)
+    setReturnPage('chat')
     setCurrentPage('aitalk')
   }
 
-  if (!isLoggedIn) {
-    return <Landing onLogin={handleLogin} />
+  const handleBackFromAITalk = () => {
+    setCurrentPage(returnPage)
   }
 
-  if (currentPage === 'aitalk') {
-    return <AITalk onBack={handleBackToChat} onLogout={handleLogout} />
-  }
-
-  if (currentPage === 'calendar') {
-    return <Calendar onOpenAITalk={handleOpenAITalk} onLogout={handleLogout} onBackToChat={handleBackToChat} />
-  }
-
-  return <ChatInterface onNavigateToCalendar={handleNavigateToCalendar} onLogout={handleLogout} onStartNewJournal={handleStartNewJournal} />
+  return (
+    <>
+      {!isLoggedIn ? (
+        <Landing onLogin={handleLogin} />
+      ) : currentPage === 'aitalk' ? (
+        <AITalk onBack={handleBackFromAITalk} onLogout={handleLogout} selectedDate={selectedDate} />
+      ) : currentPage === 'calendar' ? (
+        <Calendar onOpenAITalk={handleOpenAITalk} onLogout={handleLogout} onBackToChat={handleBackToChat} />
+      ) : (
+        <ChatInterface 
+          onNavigateToCalendar={handleNavigateToCalendar} 
+          onLogout={handleLogout}
+          onStartNewJournal={handleStartNewJournal}
+        />
+      )}
+    </>
+  )
 }
 
 export default App
